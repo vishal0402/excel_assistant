@@ -155,15 +155,41 @@ with st.sidebar:
     st.header("3. Quick prompts")
     quick_action = st.selectbox("Try a demo question", [
         "-- pick one --",
+        # Attendance
         "Show students with attendance below 75%",
+        "Show students with attendance below 60%",
+        "Show department-wise average attendance",
+        "Which students are eligible for exams (attendance 75% or above)?",
+        "Rank students by attendance, lowest first",
+        "Plot attendance distribution as a histogram",
+        # Marks / academics
         "Calculate average marks per subject",
+        "Calculate average marks per department",
         "Highlight the top 10 scorers",
+        "Highlight the bottom 5 scorers who need support",
+        "Show subject-wise pass and fail counts (pass mark is 40)",
+        "Rank students by marks within each subject",
+        "Which subject has the widest spread of scores?",
+        "Plot a bar chart of average marks by subject",
+        # Fees
         "Show students who haven't paid fees",
         "List students with fees due over 10000",
-        "Show department-wise average attendance",
+        "What is the total fees due across all students?",
+        "Plot a pie chart of fees paid vs not paid",
+        "Which department has the highest total fees pending?",
+        # Placement drive
+        "Show students who haven't registered for the drive",
+        "Count how many students registered for the drive, department-wise",
+        "Show students eligible for the drive (75%+ attendance) but not registered",
+        # At-risk / combined
+        "Show students with both low attendance and low marks who need attention",
+        "List semester-wise student counts",
+        "Show students with attendance above 90% and marks above 85%",
+        # Data quality
         "Find duplicate entries",
+        "Show all rows with missing values",
         "Show summary statistics of all numeric columns",
-        "Plot a bar chart of average marks by subject",
+        "Show the correlation between attendance and marks",
     ])
 
 if st.session_state.df is None:
