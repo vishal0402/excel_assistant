@@ -89,6 +89,10 @@ if "df" not in st.session_state:
     st.session_state.df = None
 if "history" not in st.session_state:
     st.session_state.history = []
+if "not_registered_df" not in st.session_state:
+    st.session_state.not_registered_df = None
+if "drive_messages" not in st.session_state:
+    st.session_state.drive_messages = None
 
 # --------------------------------------------------------------------------
 # Header
@@ -121,20 +125,31 @@ with st.sidebar:
 
     st.divider()
     st.header("2. No file handy?")
+    SAMPLE_FILE = "demo_academic_data.xlsx"
     if st.button("Load sample academic dataset"):
-        rng = np.random.default_rng(42)
-        n = 40
-        names = [f"Student {i+1}" for i in range(n)]
-        sample_df = pd.DataFrame({
-            "Student Name": names,
-            "Roll No": [f"R{1000+i}" for i in range(n)],
-            "Subject": rng.choice(["Data Structures", "DBMS", "OS", "Networks"], n),
-            "Marks": rng.integers(35, 100, n),
-            "Attendance %": rng.integers(50, 100, n),
-            "Fees Paid": rng.choice(["Yes", "No"], n, p=[0.75, 0.25]),
-        })
+        try:
+            # Bundled demo file — realistic records with a few intentional
+            # data-quality issues (duplicates, missing values, bad entries)
+            # so the Clean & Anomalies tab has something to catch.
+            sample_df = pd.read_excel(SAMPLE_FILE)
+        except FileNotFoundError:
+            # Fallback if demo_academic_data.xlsx isn't deployed alongside app.py
+            rng = np.random.default_rng(42)
+            n = 40
+            sample_df = pd.DataFrame({
+                "Student Name": [f"Student {i+1}" for i in range(n)],
+                "Roll No": [f"R{1000+i}" for i in range(n)],
+                "Subject": rng.choice(["Data Structures", "DBMS", "OS", "Networks"], n),
+                "Marks": rng.integers(35, 100, n),
+                "Attendance %": rng.integers(50, 100, n),
+                "Fees Paid": rng.choice(["Yes", "No"], n, p=[0.75, 0.25]),
+            })
+            sample_df["Registered for Drive"] = rng.choice(
+                ["Yes", "No"], n, p=[0.65, 0.35]
+            )
+            st.warning(f"'{SAMPLE_FILE}' not found — loaded a generated fallback dataset instead.")
         st.session_state.df = sample_df
-        st.success("Sample dataset loaded!")
+        st.success(f"Sample dataset loaded! ({sample_df.shape[0]} rows)")
 
     st.divider()
     st.header("3. Quick prompts")
@@ -144,6 +159,8 @@ with st.sidebar:
         "Calculate average marks per subject",
         "Highlight the top 10 scorers",
         "Show students who haven't paid fees",
+        "List students with fees due over 10000",
+        "Show department-wise average attendance",
         "Find duplicate entries",
         "Show summary statistics of all numeric columns",
         "Plot a bar chart of average marks by subject",
@@ -158,8 +175,9 @@ df = st.session_state.df
 # --------------------------------------------------------------------------
 # Tabs
 # --------------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["🗂 Data Preview", "💬 Ask Assistant", "🧹 Clean & Anomalies", "🧮 Formula Doctor"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    ["🗂 Data Preview", "💬 Ask Assistant", "🧹 Clean & Anomalies",
+     "🧮 Formula Doctor", "📢 Drive Notifications"]
 )
 
 # ---- Tab 1: Data preview -------------------------------------------------
@@ -276,6 +294,125 @@ with tab4:
             st.markdown(explanation)
         else:
             st.warning("Paste a formula first.")
+
+# ---- Tab 5: Drive notifications -------------------------------------------
+with tab5:
+    st.subheader("Notify students who haven't registered for a drive")
+    st.caption(
+        "Pick the column that tracks registration status, tell the assistant what "
+        "counts as 'registered', and it will find everyone who hasn't signed up and "
+        "draft a reminder message for each of them."
+    )
+
+    columns = df.columns.tolist()
+
+    def _guess_index(candidates, options, default=0):
+        for i, col in enumerate(options):
+            if any(c in col.lower() for c in candidates):
+                return i
+        return default
+
+    c1, c2 = st.columns(2)
+    with c1:
+        reg_col = st.selectbox(
+            "Registration status column",
+            columns,
+            index=_guess_index(["regist", "drive", "placement"], columns),
+        )
+    with c2:
+        name_col = st.selectbox(
+            "Student name column",
+            columns,
+            index=_guess_index(["name"], columns),
+        )
+
+    unique_vals = df[reg_col].dropna().astype(str).str.strip().unique().tolist()
+    registered_value = st.selectbox(
+        "Which value means the student IS registered?",
+        unique_vals if unique_vals else ["Yes"],
+    )
+
+    dcol1, dcol2 = st.columns(2)
+    with dcol1:
+        drive_name = st.text_input("Drive / event name", placeholder="e.g. TCS Campus Placement Drive")
+    with dcol2:
+        deadline = st.text_input("Registration deadline (optional)", placeholder="e.g. 25 July 2026")
+
+    extra_details = st.text_area(
+        "Any other details to include (optional)",
+        placeholder="e.g. Registration link, eligibility criteria, venue",
+    )
+
+    find = st.button("🔎 Find students who haven't registered", type="primary")
+
+    if find:
+        normalized = df[reg_col].astype(str).str.strip().str.lower()
+        target = str(registered_value).strip().lower()
+        not_registered_mask = df[reg_col].isna() | (normalized != target)
+        st.session_state.not_registered_df = df.loc[not_registered_mask].copy()
+        st.session_state.reg_name_col = name_col
+        st.session_state.drive_messages = None  # reset previously generated messages
+
+    if "not_registered_df" in st.session_state and st.session_state.not_registered_df is not None:
+        nr_df = st.session_state.not_registered_df
+        name_col = st.session_state.reg_name_col
+
+        st.metric("Students not yet registered", len(nr_df))
+        if len(nr_df) > 0:
+            st.dataframe(nr_df, use_container_width=True)
+
+            if st.button("✉️ Generate reminder messages"):
+                with st.spinner("Drafting messages..."):
+                    system_prompt = (
+                        "You are a student affairs assistant. Write a short, warm, and clear "
+                        "reminder notification for a student who has NOT yet registered for a "
+                        "college placement/event drive. Use the placeholder {student_name} "
+                        "exactly once where the student's name should go. Keep it under 80 "
+                        "words, friendly but urgent, and end with a clear call to action. "
+                        "Return ONLY the message text — no subject line, no extra commentary."
+                    )
+                    details = (
+                        f"Drive/event name: {drive_name or 'the upcoming drive'}\n"
+                        f"Registration deadline: {deadline or 'not specified'}\n"
+                        f"Other details: {extra_details or 'none'}"
+                    )
+                    template = call_groq(system_prompt, details, temperature=0.4).strip()
+                    st.session_state.drive_messages = template
+
+        else:
+            st.success("Everyone in this sheet is already registered — nothing to send!")
+
+    if st.session_state.get("drive_messages"):
+        template = st.session_state.drive_messages
+        nr_df = st.session_state.not_registered_df
+        name_col = st.session_state.reg_name_col
+
+        st.markdown("**Message template generated:**")
+        st.info(template)
+
+        if "{student_name}" in template:
+            personalized = nr_df[[name_col]].copy()
+            personalized["Message"] = personalized[name_col].apply(
+                lambda n: template.replace(
+                    "{student_name}", str(n) if pd.notna(n) else "Student"
+                )
+            )
+        else:
+            personalized = nr_df[[name_col]].copy()
+            personalized["Message"] = template
+
+        st.markdown("**Personalized messages, ready to send:**")
+        with st.expander("Preview all personalized messages", expanded=False):
+            for _, row in personalized.iterrows():
+                st.markdown(f"**{row[name_col]}:** {row['Message']}")
+
+        csv_bytes = personalized.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Download reminder list (CSV)",
+            data=csv_bytes,
+            file_name="drive_registration_reminders.csv",
+            mime="text/csv",
+        )
 
 st.divider()
 st.caption("Demo build — AI-generated code runs in a lightly sandboxed environment. Not for production use on sensitive data without further hardening.")
